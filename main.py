@@ -113,10 +113,22 @@ font-weight:600;cursor:pointer}
 
 DASHBOARD_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>shad.bpda.site — vault</title>
+<title>shad.bpda.site</title>
 <style>
-body{font-family:system-ui;background:#0f1726;color:#e8eef7;margin:0;padding:24px}
-h1{font-size:20px}
+body{font-family:system-ui;background:#0f1726;color:#e8eef7;margin:0;padding:0 24px 24px}
+h1{font-size:20px;margin:0}
+nav{display:flex;gap:4px;margin:0 -24px 20px;padding:14px 24px 0;position:sticky;top:0;
+background:#0f1726;border-bottom:1px solid #1f2b42;flex-wrap:wrap}
+nav button{background:transparent;border:0;border-bottom:2px solid transparent;color:#8fa3c0;
+padding:10px 14px;cursor:pointer;font-weight:600;font-size:14px;border-radius:6px 6px 0 0}
+nav button.on{color:#19c2d6;border-bottom-color:#19c2d6}
+nav button .ext{font-size:11px;color:#5a6f8f;margin-left:4px}
+.view{display:none}
+.view.on{display:block}
+.launch{background:#182238;border-radius:10px;padding:28px;text-align:center}
+.launch a{display:inline-block;margin-top:14px;background:#19c2d6;color:#04202a;font-weight:700;
+padding:10px 20px;border-radius:6px;text-decoration:none}
+.launch p{color:#8fa3c0}
 .card{background:#182238;border-radius:10px;padding:16px;margin:10px 0;display:flex;
 justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .card.active{outline:2px solid #19c2d6}
@@ -130,6 +142,14 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
 .addrow{display:flex;gap:8px;margin:16px 0;flex-wrap:wrap}
 .pill{font-size:11px;padding:2px 8px;border-radius:10px;background:#0f1726;color:#19c2d6}
 </style></head><body>
+<nav id="nav">
+  <button data-tab="vault" class="on">🔑 Key Vault</button>
+  <button data-tab="create">🎬 Reel / Video Generator <span class="ext">↗ Studio</span></button>
+  <button data-tab="banner">🪪 Banner / ID Card Maker <span class="ext">↗ Studio</span></button>
+  <button data-tab="downloads">📥 Downloads <span class="ext">↗ Studio</span></button>
+</nav>
+
+<section id="view-vault" class="view on">
 <h1>🔑 ElevenLabs Key Vault</h1>
 <p style="color:#8fa3c0">Manual switch only — click Activate to make a key live. No rotation, no failover.</p>
 <div class="addrow">
@@ -139,7 +159,33 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
 </div>
 <div id="list"></div>
 <form method="post" action="/logout" style="margin-top:24px"><button class="ghost">Log out</button></form>
+</section>
+
+<section id="view-create" class="view">
+<div class="launch"><h1>🎬 Reel / Video Generator</h1>
+<p>Rendering, scripting and posting run on Studio's own tested pipeline and Facebook Page connections — opening
+there keeps that 2FA-protected session intact instead of rebuilding it here.</p>
+<a href="https://studio.bpda.site/#create" target="_blank" rel="noopener">Open in Studio →</a></div>
+</section>
+
+<section id="view-banner" class="view">
+<div class="launch"><h1>🪪 Banner / ID Card Maker</h1>
+<p>Same reasoning as the generator — opens Studio's existing banner/ID-card tool directly.</p>
+<a href="https://studio.bpda.site/#banner" target="_blank" rel="noopener">Open in Studio →</a></div>
+</section>
+
+<section id="view-downloads" class="view">
+<div class="launch"><h1>📥 Downloads</h1>
+<p>Every rendered reel, poster and ID card lives on Studio's Downloads tab.</p>
+<a href="https://studio.bpda.site/#downloads" target="_blank" rel="noopener">Open in Studio →</a></div>
+</section>
+
 <script>
+document.getElementById('nav').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === 'view-' + b.dataset.tab));
+});
 async function load(){
   const r = await fetch('/api/keys'); const keys = await r.json();
   const el = document.getElementById('list');
