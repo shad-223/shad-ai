@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 import auth
 import graphics
 import vault
+import video
 
 app = FastAPI(title="shad.bpda.site")
 
@@ -129,6 +130,39 @@ def api_graphics_file(request: Request, gid: str, dl: int = 0):
     return FileResponse(path, media_type="image/png")
 
 
+@app.get("/api/reels")
+def api_reels_recent(request: Request):
+    _require(request)
+    return video.recent()
+
+
+@app.post("/api/reels")
+async def api_reels_make(request: Request):
+    _require(request)
+    body = await request.json()
+    lines = body.get("lines") or []
+    voice_id = body.get("voice_id", "")
+    images = body.get("images") or []
+    try:
+        meta = await run_in_threadpool(video.make, lines, voice_id, images)
+    except video.RenderError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"render failed: {e}")
+    return meta
+
+
+@app.get("/api/reels/{gid}/file")
+def api_reels_file(request: Request, gid: str, dl: int = 0):
+    _require(request)
+    path = video.get_path(gid)
+    if not path:
+        raise HTTPException(404, "no such reel")
+    if dl:
+        return FileResponse(path, media_type="video/mp4", filename=f"{gid}.mp4")
+    return FileResponse(path, media_type="video/mp4")
+
+
 LOGIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shad.bpda.site</title>
@@ -179,7 +213,7 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
 </style></head><body>
 <nav id="nav">
   <button data-tab="vault" class="on">🔑 Key Vault</button>
-  <button data-tab="create">🎬 Reel / Video Generator <span class="ext">↗ Studio</span></button>
+  <button data-tab="create">🎬 Reel / Video Generator</button>
   <button data-tab="banner">🎨 Graphics Studio</button>
   <button data-tab="downloads">📥 Downloads <span class="ext">↗ Studio</span></button>
 </nav>
@@ -197,10 +231,25 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
 </section>
 
 <section id="view-create" class="view">
-<div class="launch"><h1>🎬 Reel / Video Generator</h1>
-<p>Rendering, scripting and posting run on Studio's own tested pipeline and Facebook Page connections — opening
-there keeps that 2FA-protected session intact instead of rebuilding it here.</p>
-<a href="https://studio.bpda.site/#create" target="_blank" rel="noopener">Open in Studio →</a></div>
+<h1>🎬 Reel / Video Generator</h1>
+<p style="color:#8fa3c0">Script → voice (your active vault key) → Ken-Burns slideshow → synced captions → MP4.
+Generate-only, by design: no Facebook posting from here — download and post/schedule it yourself, or through
+Studio.</p>
+<div style="margin-top:16px">
+  <textarea id="reel-script" rows="6" placeholder="One caption line per line of text…" style="width:100%;
+    padding:10px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;color:#e8eef7"></textarea>
+</div>
+<div class="addrow">
+  <input id="reel-voice" placeholder="ElevenLabs Voice ID (from your ElevenLabs dashboard)" style="min-width:320px">
+</div>
+<div style="margin:10px 0">
+  <input id="reel-images" type="file" accept="image/*" multiple onchange="pickReelImages(this)">
+  <div style="color:#5a6f8f;font-size:12px;margin-top:4px">Up to 12 images — split evenly across the voiceover, Ken-Burns animated</div>
+</div>
+<button class="activate" onclick="makeReel()">🎬 Generate reel</button>
+<div id="reel-status" style="color:#8fa3c0;margin-top:8px"></div>
+<h2 style="margin-top:28px;font-size:16px;color:#8fa3c0">Recent</h2>
+<div id="reel-gallery" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px"></div>
 </section>
 
 <section id="view-banner" class="view">
@@ -233,7 +282,48 @@ document.getElementById('nav').addEventListener('click', (e) => {
   document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === 'view-' + b.dataset.tab));
   if (b.dataset.tab === 'banner') { renderGfxForm(); loadGallery(); }
+  if (b.dataset.tab === 'create') { loadReelGallery(); }
 });
+
+let reelImages = [];
+function pickReelImages(input){
+  reelImages = [];
+  const files = [...input.files].slice(0, 12);
+  let loaded = 0;
+  files.forEach((f, idx) => {
+    const r = new FileReader();
+    r.onload = () => { reelImages[idx] = r.result; loaded++; };
+    r.readAsDataURL(f);
+  });
+}
+async function makeReel(){
+  const lines = document.getElementById('reel-script').value.split('\n');
+  const voice_id = document.getElementById('reel-voice').value.trim();
+  const status = document.getElementById('reel-status');
+  if (!voice_id) { status.textContent = 'Voice ID is required.'; return; }
+  if (!reelImages.length) { status.textContent = 'Pick at least one image.'; return; }
+  status.textContent = 'Rendering… this can take a minute or two.';
+  const r = await fetch('/api/reels', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({lines, voice_id, images: reelImages})});
+  if (!r.ok) { status.textContent = 'Failed: ' + (await r.json()).detail; return; }
+  status.textContent = 'Done.';
+  loadReelGallery();
+}
+async function loadReelGallery(){
+  const r = await fetch('/api/reels'); const items = await r.json();
+  const el = document.getElementById('reel-gallery');
+  el.innerHTML = items.length ? '' : '<p style="color:#8fa3c0">Nothing generated yet.</p>';
+  for (const it of items){
+    const d = document.createElement('div');
+    d.style = 'background:#182238;border-radius:10px;padding:10px;width:220px';
+    d.innerHTML = `<video src="/api/reels/${it.id}/file" controls style="width:100%;border-radius:6px;display:block;background:#000"></video>
+      <div style="font-size:12px;color:#8fa3c0;margin-top:6px">${it.duration}s · ${it.lines} lines · ${(it.label||'').slice(0,24)}</div>
+      <a href="/api/reels/${it.id}/file?dl=1" style="display:block;margin-top:6px;text-align:center;
+        background:#19c2d6;color:#04202a;border-radius:6px;padding:6px;text-decoration:none;font-weight:600;
+        font-size:13px">Download</a>`;
+    el.appendChild(d);
+  }
+}
 
 const GFX_FIELDS = {
   banner: [['app_name','App name'], ['tagline','Tagline'], ['cta','Button text (default: Download Now)']],

@@ -95,6 +95,14 @@ def activate_key(kid: str) -> dict:
     return {"id": kid, "provider": provider, "label": label}
 
 
+def get_active_value(provider: str = "elevenlabs") -> str | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT value_enc FROM keys WHERE provider=? AND active=1", (provider,)
+        ).fetchone()
+    return _fernet.decrypt(row[0]).decode() if row else None
+
+
 def _env_var_name(provider: str) -> str:
     return f"ACTIVE_{provider.upper()}_API_KEY"
 
