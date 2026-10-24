@@ -130,6 +130,14 @@ def api_graphics_file(request: Request, gid: str, dl: int = 0):
     return FileResponse(path, media_type="image/png")
 
 
+@app.delete("/api/graphics/{gid}")
+def api_graphics_delete(request: Request, gid: str):
+    _require(request)
+    if not graphics.delete(gid):
+        raise HTTPException(404, "no such graphic")
+    return {"ok": True}
+
+
 @app.get("/api/reels")
 def api_reels_recent(request: Request):
     _require(request)
@@ -161,6 +169,14 @@ def api_reels_file(request: Request, gid: str, dl: int = 0):
     if dl:
         return FileResponse(path, media_type="video/mp4", filename=f"{gid}.mp4")
     return FileResponse(path, media_type="video/mp4")
+
+
+@app.delete("/api/reels/{gid}")
+def api_reels_delete(request: Request, gid: str):
+    _require(request)
+    if not video.delete(gid):
+        raise HTTPException(404, "no such reel")
+    return {"ok": True}
 
 
 LOGIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
@@ -215,7 +231,7 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
   <button data-tab="vault" class="on">🔑 Key Vault</button>
   <button data-tab="create">🎬 Reel / Video Generator</button>
   <button data-tab="banner">🎨 Graphics Studio</button>
-  <button data-tab="downloads">📥 Downloads <span class="ext">↗ Studio</span></button>
+  <button data-tab="downloads">📥 Downloads</button>
 </nav>
 
 <section id="view-vault" class="view on">
@@ -271,9 +287,18 @@ Studio.</p>
 </section>
 
 <section id="view-downloads" class="view">
-<div class="launch"><h1>📥 Downloads</h1>
-<p>Every rendered reel, poster and ID card lives on Studio's Downloads tab.</p>
-<a href="https://studio.bpda.site/#downloads" target="_blank" rel="noopener">Open in Studio →</a></div>
+<h1>📥 Downloads</h1>
+<p style="color:#8fa3c0">Everything generated in this workspace — reels, banners, posters, ID cards.</p>
+<div class="addrow" style="margin-top:12px">
+  <select id="dl-filter" onchange="loadDownloads()">
+    <option value="all">All types</option>
+    <option value="reel">Reels</option>
+    <option value="banner">Banners</option>
+    <option value="poster">Posters</option>
+    <option value="idcard">ID cards</option>
+  </select>
+</div>
+<div id="dl-gallery" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:14px"></div>
 </section>
 
 <script>
@@ -283,7 +308,44 @@ document.getElementById('nav').addEventListener('click', (e) => {
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === 'view-' + b.dataset.tab));
   if (b.dataset.tab === 'banner') { renderGfxForm(); loadGallery(); }
   if (b.dataset.tab === 'create') { loadReelGallery(); }
+  if (b.dataset.tab === 'downloads') { loadDownloads(); }
 });
+
+async function loadDownloads(){
+  const filter = document.getElementById('dl-filter').value;
+  const [reelsR, gfxR] = await Promise.all([fetch('/api/reels'), fetch('/api/graphics')]);
+  const reels = (await reelsR.json()).map(it => ({...it, _type: 'reel'}));
+  const gfx = (await gfxR.json()).map(it => ({...it, _type: it.kind}));
+  let items = [...reels, ...gfx].sort((a, b) => b.created_at - a.created_at);
+  if (filter !== 'all') items = items.filter(it => it._type === filter);
+  const el = document.getElementById('dl-gallery');
+  el.innerHTML = items.length ? '' : '<p style="color:#8fa3c0">Nothing generated yet.</p>';
+  const LABEL = {reel: '🎬 Reel', banner: '📱 Banner', poster: '🩺 Poster', idcard: '🪪 ID card'};
+  for (const it of items){
+    const isReel = it._type === 'reel';
+    const api = isReel ? '/api/reels/' : '/api/graphics/';
+    const ext = isReel ? 'mp4' : 'png';
+    const d = document.createElement('div');
+    d.style = 'background:#182238;border-radius:10px;padding:10px;width:220px';
+    const media = isReel
+      ? `<video src="${api}${it.id}/file" controls style="width:100%;border-radius:6px;display:block;background:#000"></video>`
+      : `<img src="${api}${it.id}/file" style="width:100%;border-radius:6px;display:block;background:#000">`;
+    d.innerHTML = `${media}
+      <div style="font-size:12px;color:#8fa3c0;margin-top:6px">${LABEL[it._type]||it._type} · ${(it.label||'').slice(0,24)}</div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <a href="${api}${it.id}/file?dl=1" style="flex:1;text-align:center;background:#19c2d6;color:#04202a;
+          border-radius:6px;padding:6px;text-decoration:none;font-weight:600;font-size:13px">Download</a>
+        <button onclick="deleteDownload('${it._type}','${it.id}')" style="background:#3a2230;color:#ff8f9e;
+          border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:13px">Delete</button>
+      </div>`;
+    el.appendChild(d);
+  }
+}
+async function deleteDownload(type, id){
+  const api = type === 'reel' ? '/api/reels/' : '/api/graphics/';
+  await fetch(api + id, {method: 'DELETE'});
+  loadDownloads();
+}
 
 let reelImages = [];
 function pickReelImages(input){

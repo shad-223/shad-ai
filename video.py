@@ -186,3 +186,13 @@ def recent(limit: int = 60) -> list[dict]:
         except Exception:
             continue
     return items
+
+
+def delete(gid: str) -> bool:
+    if not re.fullmatch(r"[a-f0-9]{12}", gid or ""):
+        return False
+    mp4, meta = REEL_DIR / f"{gid}.mp4", REEL_DIR / f"{gid}.json"
+    found = mp4.exists() or meta.exists()
+    mp4.unlink(missing_ok=True)
+    meta.unlink(missing_ok=True)
+    return found

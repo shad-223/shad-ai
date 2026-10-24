@@ -210,3 +210,13 @@ def recent(limit: int = 60) -> list[dict]:
         except Exception:
             continue
     return items
+
+
+def delete(gid: str) -> bool:
+    if not re.fullmatch(r"[a-f0-9]{12}", gid or ""):
+        return False
+    png, meta = GFX_DIR / f"{gid}.png", GFX_DIR / f"{gid}.json"
+    found = png.exists() or meta.exists()
+    png.unlink(missing_ok=True)
+    meta.unlink(missing_ok=True)
+    return found
