@@ -2,3 +2,6 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 cryptography==43.0.1
 python-multipart==0.0.9
+playwright==1.47.0
+qrcode==7.4.2
+Pillow==10.4.0

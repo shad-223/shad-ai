@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 import auth
+import graphics
 import vault
 
 app = FastAPI(title="shad.bpda.site")
@@ -94,6 +96,39 @@ def api_activate_key(request: Request, kid: str):
         raise HTTPException(404, "no such key")
 
 
+@app.get("/api/graphics")
+def api_graphics_recent(request: Request):
+    _require(request)
+    return graphics.recent()
+
+
+@app.post("/api/graphics/{kind}")
+async def api_graphics_make(request: Request, kind: str):
+    _require(request)
+    body = await request.json()
+    brand = body.get("brand", "bpda")
+    fields = body.get("fields") or {}
+    photo_b64 = body.get("photo")
+    try:
+        meta = await run_in_threadpool(graphics.make, kind, brand, fields, photo_b64)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"could not render: {e}")
+    return meta
+
+
+@app.get("/api/graphics/{gid}/file")
+def api_graphics_file(request: Request, gid: str, dl: int = 0):
+    _require(request)
+    path = graphics.get_path(gid)
+    if not path:
+        raise HTTPException(404, "no such graphic")
+    if dl:
+        return FileResponse(path, media_type="image/png", filename=f"{gid}.png")
+    return FileResponse(path, media_type="image/png")
+
+
 LOGIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shad.bpda.site</title>
@@ -145,7 +180,7 @@ input{padding:8px;border-radius:6px;border:1px solid #2b3a55;background:#0f1726;
 <nav id="nav">
   <button data-tab="vault" class="on">🔑 Key Vault</button>
   <button data-tab="create">🎬 Reel / Video Generator <span class="ext">↗ Studio</span></button>
-  <button data-tab="banner">🪪 Banner / ID Card Maker <span class="ext">↗ Studio</span></button>
+  <button data-tab="banner">🎨 Graphics Studio</button>
   <button data-tab="downloads">📥 Downloads <span class="ext">↗ Studio</span></button>
 </nav>
 
@@ -169,9 +204,21 @@ there keeps that 2FA-protected session intact instead of rebuilding it here.</p>
 </section>
 
 <section id="view-banner" class="view">
-<div class="launch"><h1>🪪 Banner / ID Card Maker</h1>
-<p>Same reasoning as the generator — opens Studio's existing banner/ID-card tool directly.</p>
-<a href="https://studio.bpda.site/#banner" target="_blank" rel="noopener">Open in Studio →</a></div>
+<h1>🎨 Graphics Studio</h1>
+<p style="color:#8fa3c0">Rendered here, natively — browser-engine text shaping for correct Bangla typography, not a link to Studio.</p>
+<div class="addrow" style="margin-top:16px">
+  <select id="gfx-kind" onchange="renderGfxForm()">
+    <option value="banner">📱 App Promotional Banner</option>
+    <option value="poster">🩺 Telemedicine Poster</option>
+    <option value="idcard">🪪 Dynamic ID Card</option>
+  </select>
+  <select id="gfx-brand"><option value="bpda">BPDA</option><option value="lenden">Lenden</option></select>
+</div>
+<div id="gfx-form" class="card" style="display:block;flex-direction:column;align-items:stretch;gap:10px"></div>
+<button class="activate" style="margin-top:12px" onclick="makeGfx()">✨ Generate</button>
+<div id="gfx-status" style="color:#8fa3c0;margin-top:8px"></div>
+<h2 style="margin-top:28px;font-size:16px;color:#8fa3c0">Recent</h2>
+<div id="gfx-gallery" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px"></div>
 </section>
 
 <section id="view-downloads" class="view">
@@ -185,7 +232,66 @@ document.getElementById('nav').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(x => x.classList.toggle('on', x.id === 'view-' + b.dataset.tab));
+  if (b.dataset.tab === 'banner') { renderGfxForm(); loadGallery(); }
 });
+
+const GFX_FIELDS = {
+  banner: [['app_name','App name'], ['tagline','Tagline'], ['cta','Button text (default: Download Now)']],
+  poster: [['doctor_name','Doctor name'], ['designation','Designation'], ['specialty','Specialty'],
+           ['phone','Phone'], ['address','Clinic address']],
+  idcard: [['name','Full name'], ['designation','Designation'], ['id_number','ID number'],
+           ['org','Organization'], ['qr_data','QR content (default: ID number)']],
+};
+let gfxPhoto = null;
+function renderGfxForm(){
+  const kind = document.getElementById('gfx-kind').value;
+  const el = document.getElementById('gfx-form');
+  gfxPhoto = null;
+  const needsPhoto = kind !== 'banner';
+  el.innerHTML = GFX_FIELDS[kind].map(([k,ph]) =>
+    `<input data-f="${k}" placeholder="${ph}" style="width:100%">`).join('') +
+    (kind === 'banner' ? '<input data-f="_shot" type="file" accept="image/*" style="width:100%" onchange="pickPhoto(this)">'
+      + '<div style="color:#5a6f8f;font-size:12px">Optional app screenshot</div>'
+      : '<input data-f="_photo" type="file" accept="image/*" style="width:100%" onchange="pickPhoto(this)">'
+      + `<div style="color:#5a6f8f;font-size:12px">${kind === 'idcard' ? 'Required' : 'Optional'} photo</div>`);
+}
+function pickPhoto(input){
+  const f = input.files[0]; if (!f) { gfxPhoto = null; return; }
+  const r = new FileReader();
+  r.onload = () => gfxPhoto = r.result;
+  r.readAsDataURL(f);
+}
+async function makeGfx(){
+  const kind = document.getElementById('gfx-kind').value;
+  const brand = document.getElementById('gfx-brand').value;
+  const fields = {};
+  document.querySelectorAll('#gfx-form input[data-f]').forEach(i => {
+    if (!i.dataset.f.startsWith('_')) fields[i.dataset.f] = i.value;
+  });
+  const status = document.getElementById('gfx-status');
+  status.textContent = 'Rendering…';
+  const r = await fetch(`/api/graphics/${kind}`, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({brand, fields, photo: gfxPhoto})});
+  if (!r.ok) { status.textContent = 'Failed: ' + (await r.json()).detail; return; }
+  status.textContent = 'Done.';
+  loadGallery();
+}
+async function loadGallery(){
+  const r = await fetch('/api/graphics'); const items = await r.json();
+  const el = document.getElementById('gfx-gallery');
+  el.innerHTML = items.length ? '' : '<p style="color:#8fa3c0">Nothing generated yet.</p>';
+  for (const it of items){
+    const d = document.createElement('div');
+    d.style = 'background:#182238;border-radius:10px;padding:10px;width:180px';
+    d.innerHTML = `<img src="/api/graphics/${it.id}/file" style="width:100%;border-radius:6px;display:block">
+      <div style="font-size:12px;color:#8fa3c0;margin-top:6px">${it.kind} · ${(it.label||'').slice(0,20)}</div>
+      <a href="/api/graphics/${it.id}/file?dl=1" style="display:block;margin-top:6px;text-align:center;
+        background:#19c2d6;color:#04202a;border-radius:6px;padding:6px;text-decoration:none;font-weight:600;
+        font-size:13px">Download</a>`;
+    el.appendChild(d);
+  }
+}
+
 async function load(){
   const r = await fetch('/api/keys'); const keys = await r.json();
   const el = document.getElementById('list');
